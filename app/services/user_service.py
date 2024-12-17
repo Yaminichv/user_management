@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_email_service, get_settings
 from app.models.user_model import User
-from app.schemas.user_schemas import UserCreate, UserUpdate
+from app.schemas.user_schemas import UserCreate, UserResponse, UserUpdate
 from app.utils.nickname_gen import generate_nickname
 from app.utils.security import generate_verification_token, hash_password, verify_password
 from uuid import UUID
@@ -207,3 +207,41 @@ class UserService:
             await session.commit()
             return True
         return False
+
+    @classmethod
+    async def search_users(cls, session: AsyncSession, username: Optional[str] = None, email: Optional[str] = None, first_name: Optional[str] = None, last_name: Optional[str] = None, role: Optional[str] = None, account_status: Optional[str] = None, registration_date_from: Optional[datetime] = None, registration_date_to: Optional[datetime] = None, skip: int = 0, limit: int = 10) -> List[User]:
+        query = select(User)
+        filters = {
+            User.nickname: func.lower(username) if username else None,
+            User.email: func.lower(email) if email else None,
+            User.first_name: func.lower(first_name) if first_name else None,
+            User.last_name: func.lower(last_name) if last_name else None,
+            User.role: role if role else None,
+            User.is_locked: True if account_status and account_status.lower() == 'locked' else (False if account_status and account_status.lower() == 'active' else None),
+            User.created_at: (registration_date_from, registration_date_to)
+        }
+
+        for attribute, value in filters.items():
+            if isinstance(value, tuple):  # Special handling for date range
+                query = query.filter(attribute >= value[0], attribute <= value[1]) if value[0] and value[1] else query
+            elif value is not None:
+                query = query.filter(attribute == value)
+
+        query = query.offset(skip).limit(limit)
+        result = await cls._execute_query(session, query)
+        users = result.scalars().all() if result else []
+
+    # Prepare user responses with registration date and account status
+        user_responses = [
+            UserResponse(
+                id=user.id,
+                email=user.email,
+                nickname=user.nickname,
+                is_professional=user.is_professional,
+                role=user.role,
+                registration_date=user.created_at,
+                account_status="Active" if not user.is_locked else "Locked"
+            ) for user in users
+        ]
+
+        return user_responses
