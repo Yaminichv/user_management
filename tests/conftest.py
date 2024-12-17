@@ -238,3 +238,9 @@ def email_service():
         mock_service.send_verification_email.return_value = None
         mock_service.send_user_email.return_value = None
         return mock_service
+
+@pytest.fixture
+def mock_email_service():
+    email_service = AsyncMock()
+    email_service.send_email_verification.return_value = True
+    return email_service
