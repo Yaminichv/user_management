@@ -4,6 +4,7 @@ import pytest
 from httpx import AsyncClient
 from app.main import app
 from app.models.user_model import User, UserRole
+from app.services.user_service import UserService
 from app.utils.nickname_gen import generate_nickname
 from app.utils.security import hash_password
 from app.services.jwt_service import decode_token
@@ -236,3 +237,48 @@ async def test_list_users_unauthorized(async_client, user_token):
         headers={"Authorization": f"Bearer {user_token}"}
     )
     assert response.status_code == 403  # Forbidden, as expected for regular user
+
+
+@pytest.mark.asyncio
+async def test_search_users_by_email(async_client: AsyncClient, db_session, admin_token, mock_email_service):
+    # Setup: Create a user
+    user_data = {
+        "nickname": "testemailuser",
+        "email": "testemail@example.com",
+        "password": "StrongPassword1!",
+        "role": "AUTHENTICATED"
+    }
+    await UserService.create(db_session, user_data, mock_email_service)
+
+    # Search for the user by email
+    response = await async_client.get(
+        "/users/search/",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        params={"email": "testemail@example.com"}
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["email"] == "testemail@example.com"
+
+
+@pytest.mark.asyncio
+async def test_search_users_by_role(async_client: AsyncClient, db_session, admin_token, mock_email_service):
+    # Setup: Create multiple users with roles
+    user_data_1 = {"nickname": "useradmin", "email": "admin@example.com", "password": "StrongPassword1!", "role": "ADMIN"}
+    user_data_2 = {"nickname": "userauth", "email": "auth@example.com", "password": "StrongPassword1!", "role": "AUTHENTICATED"}
+    await UserService.create(db_session, user_data_1, mock_email_service)
+    await UserService.create(db_session, user_data_2, mock_email_service)
+
+    # Search for ADMIN role
+    response = await async_client.get(
+        "/users/search/",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        params={"role": "ADMIN"}
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["role"] == "ADMIN"

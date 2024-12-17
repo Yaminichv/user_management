@@ -21,7 +21,7 @@ Key Highlights:
 from builtins import dict, int, len, str
 from datetime import timedelta
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_current_user, get_db, get_email_service, require_role
@@ -33,6 +33,17 @@ from app.services.jwt_service import create_access_token
 from app.utils.link_generation import create_user_links, generate_pagination_links
 from app.dependencies import get_settings
 from app.services.email_service import EmailService
+from fastapi import APIRouter, HTTPException, status, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
+from app.schemas.user_schemas import UserUpdate, UserResponse
+from app.services.user_service import UserService
+from app.dependencies import get_db, oauth2_scheme, require_role
+from uuid import UUID
+from typing import Optional
+from fastapi import Query
+from datetime import datetime
+from app.schemas.user_schemas import UserListResponse
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 settings = get_settings()
@@ -252,3 +263,39 @@ async def verify_email(user_id: UUID, token: str, db: AsyncSession = Depends(get
     if await UserService.verify_email_with_token(db, user_id, token):
         return {"message": "Email verified successfully"}
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification token")
+
+@router.get("/users/search/", response_model=UserListResponse, tags=["User Management Requires (Admin or Manager Roles)"])
+async def search_users(
+    request: Request,
+    username: Optional[str] = Query(None, description="Username to search for"),
+    email: Optional[str] = Query(None, description="Email to search for"),
+    first_name: Optional[str] = Query(None, description="First name to search for"),
+    last_name: Optional[str] = Query(None, description="Last name to search for"),
+    role: Optional[str] = Query(None, description="Role to search for"),
+    account_status: Optional[str] = Query(None, description="Account status to filter (active or locked)"),
+    registration_date_from: Optional[datetime] = Query(None, description="Start of registration date range"),
+    registration_date_to: Optional[datetime] = Query(None, description="End of registration date range"),
+    skip: int = Query(0, description="Number of records to skip"),
+    limit: int = Query(10, description="Maximum number of records to return"),
+    db: AsyncSession = Depends(get_db)
+):
+    total_users = await UserService.count(db)
+
+    users = await UserService.search_users(db, username=username, email=email, first_name=first_name, last_name=last_name, role=role, account_status=account_status, registration_date_from=registration_date_from, registration_date_to=registration_date_to, skip=skip, limit=limit)
+
+    if not users:
+        raise HTTPException(status_code=404, detail="No users found with the provided criteria.")
+
+    user_responses = [
+        UserResponse.model_validate(user) for user in users
+    ]
+
+    pagination_links = generate_pagination_links(request, skip, limit, total_users)
+
+    return UserListResponse(
+        items=user_responses,
+        total=total_users,
+        page=skip // limit + 1,
+        size=len(user_responses),
+        links=pagination_links
+    )
